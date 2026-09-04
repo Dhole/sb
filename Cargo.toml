@@ -1,0 +1,12 @@
+[package]
+name = "sb"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xdg = "3.0"
+clap = { version = "4.6", features = ["derive"] }
+toml = "1.1"
+serde = { version = "1.0", features = ["derive"] }
+shellexpand = "3.1"
+tempfile = "3"
