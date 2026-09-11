@@ -2,21 +2,15 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::process::Command;
+use std::collections::HashMap;
+use std::os::unix::process::CommandExt;
 
 const ENV_VARS: &'static [&'static str] = &[
-    "EDITOR",
-    "HOME",
     "INFOPATH",
     "LD_LIBRARY_PATH",
     "LIBEXEC_PATH",
-    "PAGER",
     "PATH",
     "PKG_CONFIG_PATH",
-    "PWD",
-    "SHELL",
-    "TERM",
-    "TERMINFO",
-    "TERMINFO_DIRS",
     "XDG_BIN_HOME",
     "XDG_CACHE_HOME",
     "XDG_CONFIG_DIRS",
@@ -55,7 +49,6 @@ const ENV_VARS_DISPLAY: &'static [&'static str] = &[
     "DISPLAY",
     "WAYLAND_DISPLAY",
     "DESKTOP_STARTUP_ID",
-    "BROWSER",
     "GDK_BACKEND",
     "GTK2_RC_FILES",
     "GTK_A11Y",
@@ -84,8 +77,9 @@ const PATHS_GENERAL: &'static [&'static str] = &[
     "/etc/alternatives",
     "/etc/man_db.conf",
     "/etc/localtime",
-    "/etc/passwd",
     "/etc/crypto-policies",
+    "/etc/machine-id",
+    "/var/lib/dbus/machine-id",
     "/sys",
 ];
 
@@ -108,13 +102,15 @@ pub struct Options {
     pub name: String,
     pub src_home: String,
     pub user: String,
+    pub id: usize,
     pub net: bool,
     pub display: bool,
     pub cmd: Vec<String>,
-    pub bind: Vec<(String, String)>,
-    pub ro_bind: Vec<(String, String)>,
-    pub dev_bind: Vec<(String, String)>,
-    pub env: Vec<(String, String)>,
+    /// binds are dst, src
+    pub bind: HashMap<String, String>,
+    pub ro_bind: HashMap<String, String>,
+    pub dev_bind: HashMap<String, String>,
+    pub env: HashMap<String, String>,
 }
 
 impl Options {
@@ -132,6 +128,10 @@ impl Options {
         self.user = user.into();
         self
     }
+    pub fn id(mut self, id: usize) -> Self {
+        self. id = id;
+        self
+    }
     pub fn cmd<I, S>(mut self, cmd: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -141,32 +141,33 @@ impl Options {
         self
     }
     pub fn ro_bind(mut self, src: impl Into<String>, dst: impl Into<String>) -> Self {
-        self.ro_bind.push((src.into(), dst.into()));
+        self.ro_bind.insert(dst.into(), src.into());
         self
     }
     pub fn bind(mut self, src: impl Into<String>, dst: impl Into<String>) -> Self {
-        self.bind.push((src.into(), dst.into()));
+        self.bind.insert(dst.into(), src.into());
         self
     }
     pub fn dev_bind(mut self, src: impl Into<String>, dst: impl Into<String>) -> Self {
-        self.dev_bind.push((src.into(), dst.into()));
+        self.dev_bind.insert(dst.into(), src.into());
         self
     }
     pub fn env(mut self, var: impl Into<String>, value: impl Into<String>) -> Self {
-        self.env.push((var.into(), value.into()));
+        self.env.insert(var.into(), value.into());
         self
     }
 }
 
-pub fn run(mut opts: Options) {
+pub fn build_cmd(mut opts: Options) -> Command {
     let mut cmd = Command::new("bwrap");
     cmd.arg("--new-session");
     cmd.arg("--clearenv");
     cmd.args(["--dev", "/dev"]);
     cmd.args(["--proc", "/proc"]);
     cmd.args(["--tmpfs", "/tmp"]);
+    cmd.args(["--uid", &format!("{}", opts.id)]);
+    cmd.args(["--gid", &format!("{}", opts.id)]);
     let home = format!("/home/{}", opts.user);
-    cmd.args(["--dir", &home]);
     cmd.args(["--hostname", &opts.name]);
     cmd.arg("--unshare-all");
     cmd.args(["--bind", &opts.src_home, &home]);
@@ -203,7 +204,7 @@ pub fn run(mut opts: Options) {
         }
     }
 
-    for (src, dst) in opts.bind {
+    for (dst, src) in opts.bind {
         let (src, dst) = (
             shellexpand::tilde(&src).to_string(),
             shellexpand::tilde(&dst).to_string(),
@@ -212,7 +213,7 @@ pub fn run(mut opts: Options) {
             cmd.args(["--bind", &src, &dst]);
         }
     }
-    for (src, dst) in opts.ro_bind {
+    for (dst, src) in opts.ro_bind {
         let (src, dst) = (
             shellexpand::tilde(&src).to_string(),
             shellexpand::tilde(&dst).to_string(),
@@ -221,7 +222,7 @@ pub fn run(mut opts: Options) {
             cmd.args(["--ro-bind", &src, &dst]);
         }
     }
-    for (src, dst) in opts.dev_bind {
+    for (dst, src) in opts.dev_bind {
         let (src, dst) = (
             shellexpand::tilde(&src).to_string(),
             shellexpand::tilde(&dst).to_string(),
@@ -233,8 +234,18 @@ pub fn run(mut opts: Options) {
     for (var, value) in opts.env {
         cmd.args(["--setenv", &var, &value]);
     }
-    let output = cmd.args(&opts.cmd).output().unwrap();
+    cmd.args(&opts.cmd);
+    cmd
+}
+
+pub fn run(opts: Options) {
+    let output = build_cmd(opts).output().unwrap();
     println!("status: {}", output.status);
     io::stdout().write_all(&output.stdout).unwrap();
     io::stderr().write_all(&output.stderr).unwrap();
+}
+
+pub fn exec(opts: Options) {
+    let result: Result<(), _> = Err(build_cmd(opts).exec());
+    result.unwrap();
 }
