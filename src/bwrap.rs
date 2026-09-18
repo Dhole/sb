@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
 
 const ENV_VARS: &'static [&'static str] = &[
+    "TERM",
     "INFOPATH",
     "LD_LIBRARY_PATH",
     "LIBEXEC_PATH",
@@ -47,6 +48,7 @@ const ENV_VARS: &'static [&'static str] = &[
 
 const ENV_VARS_DISPLAY: &'static [&'static str] = &[
     "DISPLAY",
+    // "XAUTHORITY",
     "WAYLAND_DISPLAY",
     "DESKTOP_STARTUP_ID",
     "GDK_BACKEND",
@@ -70,15 +72,16 @@ const PATHS_GENERAL: &'static [&'static str] = &[
     "/nix",
     "/etc/nix",
     "/etc/static/nix",
-    "/bin",
-    "/usr",
-    "/lib",
-    "/lib64",
+    "/etc/java",
     "/etc/alternatives",
     "/etc/man_db.conf",
     "/etc/localtime",
     "/etc/crypto-policies",
     "/etc/machine-id",
+    "/bin",
+    "/usr",
+    "/lib",
+    "/lib64",
     "/var/lib/dbus/machine-id",
     "/sys",
 ];
@@ -167,10 +170,10 @@ pub fn build_cmd(mut opts: Options) -> Command {
     cmd.args(["--tmpfs", "/tmp"]);
     cmd.args(["--uid", &format!("{}", opts.id)]);
     cmd.args(["--gid", &format!("{}", opts.id)]);
-    let home = format!("/home/{}", opts.user);
+    let home_env = format!("/home/{}", opts.user);
     cmd.args(["--hostname", &opts.name]);
     cmd.arg("--unshare-all");
-    cmd.args(["--bind", &opts.src_home, &home]);
+    cmd.args(["--bind", &opts.src_home, &home_env]);
 
     for p in PATHS_GENERAL {
         opts = opts.ro_bind(*p, *p);
@@ -204,10 +207,18 @@ pub fn build_cmd(mut opts: Options) -> Command {
         }
     }
 
+    let home_host = env::var("HOME").expect("$HOME set");
+    let expand_tilde_host = |s: &str| -> String {
+        s.replace("~", &home_host)
+    };
+    let expand_tilde_dst = |s: &str| -> String {
+        s.replace("~", &home_env)
+    };
+
     for (dst, src) in opts.bind {
         let (src, dst) = (
-            shellexpand::tilde(&src).to_string(),
-            shellexpand::tilde(&dst).to_string(),
+            expand_tilde_host(&src).to_string(),
+            expand_tilde_dst(&dst).to_string(),
         );
         if matches!(fs::exists(&src), Ok(true)) {
             cmd.args(["--bind", &src, &dst]);
@@ -215,8 +226,8 @@ pub fn build_cmd(mut opts: Options) -> Command {
     }
     for (dst, src) in opts.ro_bind {
         let (src, dst) = (
-            shellexpand::tilde(&src).to_string(),
-            shellexpand::tilde(&dst).to_string(),
+            expand_tilde_host(&src).to_string(),
+            expand_tilde_dst(&dst).to_string(),
         );
         if matches!(fs::exists(&src), Ok(true)) {
             cmd.args(["--ro-bind", &src, &dst]);
@@ -224,8 +235,8 @@ pub fn build_cmd(mut opts: Options) -> Command {
     }
     for (dst, src) in opts.dev_bind {
         let (src, dst) = (
-            shellexpand::tilde(&src).to_string(),
-            shellexpand::tilde(&dst).to_string(),
+            expand_tilde_host(&src).to_string(),
+            expand_tilde_dst(&dst).to_string(),
         );
         if matches!(fs::exists(&src), Ok(true)) {
             cmd.args(["--dev-bind", &src, &dst]);

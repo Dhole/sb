@@ -27,7 +27,17 @@ enum Commands {
     #[command(arg_required_else_help = true)]
     Setup { name: String },
     #[command(arg_required_else_help = true)]
-    Term { name: String },
+    Term {
+        name: String,
+        #[arg(short, long)]
+        net: bool
+    },
+    #[command(arg_required_else_help = true)]
+    Shell {
+        name: String,
+        #[arg(short, long)]
+        net: bool
+    },
 }
 
 fn cli_parse() -> Result<Cli, clap::Error> {
@@ -212,12 +222,27 @@ fn main() {
                 )
                 .ro_bind("~/.local/share/chezmoi/", "~/.local/share/chezmoi/"))
         }
-        Commands::Term { name } => {
+        Commands::Term { name, net } => {
             let env_config = config.env(&name);
             prelude(&name, &env_config);
             let mut opts = env_run_opts(&config, &name, &env_config)
+                // .ro_bind(&env::var("XAUTHORITY").unwrap(), "/tmp/.Xauthority")
+                .env("XAUTHORITY", "/tmp/.Xauthority")
                 .cmd(env_config.terminal);
             opts.display = true;
+            if net {
+                opts.net = true;
+            }
+            exec(opts)
+        }
+        Commands::Shell { name, net } => {
+            let env_config = config.env(&name);
+            prelude(&name, &env_config);
+            let mut opts = env_run_opts(&config, &name, &env_config)
+                .cmd(["tmux"]);
+            if net {
+                opts.net = true;
+            }
             exec(opts)
         }
     }
